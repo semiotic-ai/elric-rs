@@ -58,7 +58,7 @@ fn stream_blocks(
     stop_block_num: u64,
 ) -> impl Stream<Item = Result<BlockResponse, Error>> {
     let mut latest_cursor = cursor.unwrap_or_else(|| "".to_string());
-    let mut backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
+    let mut backoff = ExponentialBackoff::from_millis(10).max_delay(Duration::from_secs(45));
 
     try_stream! {
         loop {
@@ -88,11 +88,11 @@ fn stream_blocks(
                     println!("Blockstreams connected");
 
                     let mut encountered_error = false;
-                    for await response in stream{
+                    for await response in stream {
                         match process_substreams_response(response).await {
                             BlockProcessedResult::BlockScopedData(block_scoped_data) => {
                                 // Reset backoff because we got a good value from the stream
-                                backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
+                                backoff = ExponentialBackoff::from_millis(10).max_delay(Duration::from_secs(45));
 
                                 let cursor = block_scoped_data.cursor.clone();
                                 yield BlockResponse::New(block_scoped_data);
@@ -101,7 +101,7 @@ fn stream_blocks(
                             },
                             BlockProcessedResult::BlockUndoSignal(block_undo_signal) => {
                                 // Reset backoff because we got a good value from the stream
-                                backoff = ExponentialBackoff::from_millis(500).max_delay(Duration::from_secs(45));
+                                backoff = ExponentialBackoff::from_millis(10).max_delay(Duration::from_secs(45));
 
                                 let cursor = block_undo_signal.last_valid_cursor.clone();
                                 yield BlockResponse::Undo(block_undo_signal);
@@ -184,7 +184,7 @@ async fn process_substreams_response(
             //     .iter()
             //     .filter_map(|module| {
             //         use crate::pb::sf::substreams::rpc::v2::module_progress::Type;
-
+            //
             //         if let Type::ProcessedRanges(range) = module.r#type.as_ref().unwrap() {
             //             Some(format!(
             //                 "{} @ [{}]",
@@ -201,16 +201,16 @@ async fn process_substreams_response(
             //         }
             //     })
             //     .collect();
-
+            //
             // println!("Progess {}", progresses.join(", "));
 
             BlockProcessedResult::Skip()
         }
+        Some(_) => BlockProcessedResult::Skip(),
         None => {
             println!("Got None on substream message");
             BlockProcessedResult::Skip()
-        }
-        _ => BlockProcessedResult::Skip(),
+        } // _ => BlockProcessedResult::Skip(),
     }
 }
 

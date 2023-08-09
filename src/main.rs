@@ -1,16 +1,26 @@
 use anyhow::{format_err, Context, Error};
+use clickhouse::Client;
+use futures03::future::join_all;
 use futures03::StreamExt;
-use pb::sf::substreams::rpc::v2::{BlockScopedData, BlockUndoSignal};
+use hyper_tls::HttpsConnector;
 use pb::sf::substreams::v1::Package;
 
 use prost::Message;
-use std::{env, process::exit, sync::Arc};
+use std::{collections::HashMap, env, process::exit, sync::Arc, time::Duration};
 use substreams::SubstreamsEndpoint;
+use substreams_database_change::pb::database::Field;
 use substreams_stream::{BlockResponse, SubstreamsStream};
 
+use crate::loader::DatabaseLoader;
+use crate::table_info::{get_columns, get_table_information, DynamicTable};
+
+mod fixed_string;
+mod loader;
 mod pb;
 mod substreams;
 mod substreams_stream;
+mod table_info;
+mod u256;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -48,6 +58,37 @@ async fn main() -> Result<(), Error> {
         0,
     );
 
+    const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let https = HttpsConnector::new();
+
+    let client = hyper::Client::builder()
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .build::<_, hyper::Body>(https);
+
+    let client = Client::with_http_client(client)
+        .with_url("https://urhsel0sah.us-central1.gcp.clickhouse.cloud:8443")
+        .with_user("default")
+        .with_password("jD~ycmD6._.ab")
+        .with_option("async_insert", "1")
+        .with_option("wait_for_async_insert", "0");
+
+    let table_info = get_table_information(&client).await?;
+
+    let dynamic_tables = table_info
+        .iter()
+        .map(|table| async {
+            let mut columns = get_columns(&client, "default", &table.table_name)
+                .await
+                .expect("could not find columns");
+            columns.sort();
+            DynamicTable::new(&table.table_name, columns)
+        })
+        .collect::<Vec<_>>();
+    let dynamic_tables = join_all(dynamic_tables).await;
+
+    let mut loader = DatabaseLoader::new(client, dynamic_tables);
+
     loop {
         match stream.next().await {
             None => {
@@ -55,11 +96,11 @@ async fn main() -> Result<(), Error> {
                 break;
             }
             Some(Ok(BlockResponse::New(data))) => {
-                process_block_scoped_data(&data)?;
+                loader.process_block_scoped_data(&data).await?;
                 persist_cursor(data.cursor)?;
             }
             Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                process_block_undo_signal(&undo_signal)?;
+                loader.process_block_undo_signal(&undo_signal)?;
                 persist_cursor(undo_signal.last_valid_cursor)?;
             }
             Some(Err(err)) => {
@@ -71,38 +112,17 @@ async fn main() -> Result<(), Error> {
         }
     }
 
-    Ok(())
-}
-
-fn process_block_scoped_data(data: &BlockScopedData) -> Result<(), Error> {
-    let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
-
-    // You can decode the actual Any type received using this code:
-    //
-    //     use prost::Message;
-    //     let value = Message::decode::<GeneratedStructName>(data.value.as_slice())?;
-    //
-    // Where GeneratedStructName is the Rust code generated for the Protobuf representing
-    // your type.
-
-    println!(
-        "Block #{} - Payload {} ({} bytes)",
-        data.clock.as_ref().unwrap().number,
-        output.type_url.replace("type.googleapis.com/", ""),
-        output.value.len()
-    );
+    loader.end().await;
 
     Ok(())
 }
 
-fn process_block_undo_signal(_undo_signal: &BlockUndoSignal) -> Result<(), anyhow::Error> {
-    // `BlockUndoSignal` must be treated as "delete every data that has been recorded after
-    // block height specified by block in BlockUndoSignal". In the example above, this means
-    // you must delete changes done by `Block #7b` and `Block #6b`. The exact details depends
-    // on your own logic. If for example all your added record contain a block number, a
-    // simple way is to do `delete all records where block_num > 5` which is the block num
-    // received in the `BlockUndoSignal` (this is true for append only records, so when only `INSERT` are allowed).
-    unimplemented!("you must implement some kind of block undo handling, or request only final blocks (tweak substreams_stream.rs)")
+fn convert_field_to_hash(fields: Vec<Field>) -> HashMap<String, String> {
+    let mut field_map: HashMap<String, String> = HashMap::new();
+    for field in fields {
+        field_map.insert(field.name, field.new_value);
+    }
+    field_map
 }
 
 fn persist_cursor(_cursor: String) -> Result<(), anyhow::Error> {
@@ -127,4 +147,90 @@ fn load_persisted_cursor() -> Result<Option<String>, anyhow::Error> {
 fn read_package(file: &str) -> Result<Package, anyhow::Error> {
     let content = std::fs::read(file).context(format_err!("read package {}", file))?;
     Package::decode(content.as_ref()).context("decode command")
+}
+
+#[cfg(test)]
+mod tests {
+
+    use clickhouse::Row;
+    use serde::Serialize;
+
+    // use super::*;
+
+    #[derive(Row, Serialize)]
+    struct Test {
+        contract: String,
+    }
+
+    // #[test]
+    // fn check_encoders() -> Result<()> {
+    //     let mut buffer = BytesMut::new();
+    //     let column_info = vec![
+    //         ColumnInfo {
+    //             column_name: "contract_address".into(),
+    //             data_type: ColumnType::FixedString(40),
+    //         },
+    //         ColumnInfo {
+    //             column_name: "evt_tx_hash".into(),
+    //             data_type: ColumnType::String,
+    //         },
+    //         ColumnInfo {
+    //             column_name: "evt_index".into(),
+    //             data_type: ColumnType::UInt32,
+    //         },
+    //         ColumnInfo {
+    //             column_name: "evt_block_time".into(),
+    //             data_type: ColumnType::DateTime,
+    //         },
+    //         ColumnInfo {
+    //             column_name: "evt_block_number".into(),
+    //             data_type: ColumnType::UInt32,
+    //         },
+    //         ColumnInfo {
+    //             column_name: "from".into(),
+    //             data_type: ColumnType::FixedString(40),
+    //         },
+    //         ColumnInfo {
+    //             column_name: "to".into(),
+    //             data_type: ColumnType::FixedString(40),
+    //         },
+    //         ColumnInfo {
+    //             column_name: "value".into(),
+    //             data_type: ColumnType::UInt256,
+    //         },
+    //     ];
+    //     let date = "2023-08-04T13:53:29+00:00";
+    //
+    //     let mut data: HashMap<String, String> = HashMap::new();
+    //     data.insert("contract_address".into(), "asdfasdfasdf".into());
+    //     data.insert("evt_index".into(), "5".into());
+    //     data.insert("evt_block_time".into(), date.into());
+    //     data.insert("evt_block_number".into(), "1".into());
+    //     data.insert("evt_tx_hash".into(), "asdfasdfasdf".into());
+    //     data.insert("from".into(), "asdfasdfasdf".into());
+    //     data.insert("to".into(), "asdfasdfasdf".into());
+    //     data.insert("value".into(), "100".into());
+    //     // let test = DynamicInsert::new(column_info, data);
+    //     // ser::serialize_into(&mut buffer, &test)?;
+    //     let mut buffer2 = BytesMut::new();
+    //
+    //     let date = chrono::DateTime::parse_from_rfc3339(date)
+    //         .context("evt_block_time")?
+    //         .timestamp();
+    //
+    //     let test = TransferEvent {
+    //         contract_address: "asdfasdfasdf".into(),
+    //         evt_block_time: date as i32,
+    //         evt_index: 5,
+    //         evt_block_number: 1,
+    //         evt_tx_hash: "asdfasdfasdf".into(),
+    //         from: "asdfasdfasdf".into(),
+    //         to: "asdfasdfasdf".into(),
+    //         value: U256::from_dec_str("100").unwrap(),
+    //     };
+    //     // ser::serialize_into(&mut buffer2, &test)?;
+    //
+    //     assert_eq!(buffer, buffer2);
+    //     Ok(())
+    // }
 }

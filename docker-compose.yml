@@ -1,0 +1,13 @@
+version: "3"
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    user: "101:101"
+    hostname: clickhouse
+    volumes:
+      - ${PWD}/devel/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ${PWD}/devel/users.xml:/etc/clickhouse-server/users.d/users.xml
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+      - "9005:9005"
