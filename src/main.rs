@@ -11,6 +11,9 @@ use std::{collections::HashMap, env, process::exit, sync::Arc, time::Duration};
 use substreams::SubstreamsEndpoint;
 use substreams_database_change::pb::database::Field;
 use substreams_stream::{BlockResponse, SubstreamsStream};
+use tokio::select;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::watch;
 
 use crate::loader::DatabaseLoader;
 use crate::table_info::{get_columns, get_table_information, DynamicTable};
@@ -88,34 +91,42 @@ async fn main() -> Result<(), Error> {
         .collect::<Vec<_>>();
     let dynamic_tables = join_all(dynamic_tables).await;
 
-    let mut loader = DatabaseLoader::new(client, dynamic_tables);
+    let mut loader = DatabaseLoader::new(id, client, dynamic_tables);
+
+    let (stop_tx, mut stop_rx) = watch::channel(());
+
+    tokio::spawn(async move {
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        loop {
+            select! {
+                _ = sigterm.recv() => println!("Recieve SIGTERM"),
+                _ = sigint.recv() => println!("Recieve SIGTERM"),
+            };
+            stop_tx.send(()).unwrap();
+        }
+    });
 
     loop {
-        match stream.next().await {
-            None => {
-                println!("Stream consumed");
-                break;
-            }
-            Some(Ok(BlockResponse::New(data))) => {
-                loader.process_block_scoped_data(&data).await?;
-                persist_cursor(data.cursor)?;
-            }
-            Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                loader.process_block_undo_signal(&undo_signal)?;
-                persist_cursor(undo_signal.last_valid_cursor)?;
-            }
-            Some(Err(err)) => {
-                println!();
-                println!("Stream terminated with error");
-                println!("{:?}", err);
-                exit(1);
-            }
+        select! {
+            biased;
+
+            _ = stop_rx.changed() => break,
+            stream_response = stream.next() => match stream_response {
+                None => {
+                    println!("Stream consumed");
+                    break;
+                }
+                Some(Ok(BlockResponse::New(data))) => {
                     let block_num = data.clock.as_ref().unwrap().number;
                     let block_id = data.clock.as_ref().unwrap().id.clone();
+                    loader.process_block_scoped_data(&data).await?;
                     loader
                         .persist_cursor(data.cursor, block_num, block_id)
                         .await?;
                     // persist_cursor(data.cursor)?;
+                }
+                Some(Ok(BlockResponse::Undo(undo_signal))) => {
                     loader.process_block_undo_signal(&undo_signal)?;
                     loader
                         .persist_cursor(
@@ -124,6 +135,13 @@ async fn main() -> Result<(), Error> {
                             undo_signal.last_valid_block.as_ref().unwrap().id.clone(),
                         )
                         .await?;
+                }
+                Some(Err(err)) => {
+                    println!();
+                    println!("Stream terminated with error");
+                    println!("{:?}", err);
+                    exit(1);
+                }
             },
         }
     }
