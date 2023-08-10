@@ -1,8 +1,9 @@
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::{Context, Error};
-use clickhouse::{inserter::Inserter, Client};
+use clickhouse::{insert::Insert, inserter::Inserter, Client, Row};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use substreams_database_change::pb::database::{
     table_change::PrimaryKey, CompositePrimaryKey, DatabaseChanges, TableChange,
 };
@@ -14,12 +15,28 @@ use crate::{
 };
 
 pub struct DatabaseLoader {
+    id: String,
     tables: HashMap<String, DynamicTable>,
     inserters: HashMap<String, Inserter<DynamicTable>>,
+    cursor: Insert<Cursor>,
+}
+
+#[derive(Row, Serialize, Deserialize)]
+pub struct Cursor {
+    id: String,
+    cursor: String,
+    block_num: u64,
+    block_id: String,
+}
+
+impl Cursor {
+    pub fn cursor(&self) -> &String {
+        &self.cursor
+    }
 }
 
 impl DatabaseLoader {
-    pub fn new(client: Client, table: Vec<DynamicTable>) -> Self {
+    pub fn new(id: String, client: Client, table: Vec<DynamicTable>) -> Self {
         let mut inserters = HashMap::new();
 
         table.iter().for_each(|table| {
@@ -38,7 +55,17 @@ impl DatabaseLoader {
             .map(|t| (t.table_name.clone(), t))
             .collect();
 
-        Self { tables, inserters }
+        let cursor = client
+            .insert("cursors")
+            .expect("error while creating cursors inserter")
+            .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)));
+
+        Self {
+            id,
+            tables,
+            inserters,
+            cursor,
+        }
     }
 
     pub async fn process_block_scoped_data(&mut self, data: &BlockScopedData) -> Result<(), Error> {
@@ -99,6 +126,22 @@ impl DatabaseLoader {
         unimplemented!("you must implement some kind of block undo handling, or request only final blocks (tweak substreams_stream.rs)")
     }
 
+    pub async fn persist_cursor(
+        self: &mut Self,
+        cursor: String,
+        block_num: u64,
+        block_id: String,
+    ) -> Result<(), anyhow::Error> {
+        let cursor = Cursor {
+            id: self.id.clone(),
+            cursor,
+            block_num,
+            block_id,
+        };
+        self.cursor.write(&cursor).await?;
+        Ok(())
+    }
+
     fn get_table_inserter(&mut self, table_name: &str) -> Option<&mut Inserter<DynamicTable>> {
         self.inserters.get_mut(table_name)
     }
@@ -111,6 +154,7 @@ impl DatabaseLoader {
         for (_, inserter) in self.inserters {
             inserter.end().await.expect("end");
         }
+        self.cursor.end().await.expect("cursor end");
     }
 }
 

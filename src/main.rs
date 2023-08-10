@@ -3,6 +3,7 @@ use clickhouse::Client;
 use futures03::future::join_all;
 use futures03::StreamExt;
 use hyper_tls::HttpsConnector;
+use loader::Cursor;
 use pb::sf::substreams::v1::Package;
 
 use prost::Message;
@@ -46,7 +47,7 @@ async fn main() -> Result<(), Error> {
     let package = read_package(&package_file)?;
     let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, token).await?);
 
-    let cursor: Option<String> = load_persisted_cursor()?;
+    let cursor: Option<String> = load_persisted_cursor(&client, &id).await?;
 
     let mut stream = SubstreamsStream::new(
         endpoint.clone(),
@@ -109,6 +110,21 @@ async fn main() -> Result<(), Error> {
                 println!("{:?}", err);
                 exit(1);
             }
+                    let block_num = data.clock.as_ref().unwrap().number;
+                    let block_id = data.clock.as_ref().unwrap().id.clone();
+                    loader
+                        .persist_cursor(data.cursor, block_num, block_id)
+                        .await?;
+                    // persist_cursor(data.cursor)?;
+                    loader.process_block_undo_signal(&undo_signal)?;
+                    loader
+                        .persist_cursor(
+                            undo_signal.last_valid_cursor,
+                            undo_signal.last_valid_block.as_ref().unwrap().number,
+                            undo_signal.last_valid_block.as_ref().unwrap().id.clone(),
+                        )
+                        .await?;
+            },
         }
     }
 
@@ -125,23 +141,17 @@ fn convert_field_to_hash(fields: Vec<Field>) -> HashMap<String, String> {
     field_map
 }
 
-fn persist_cursor(_cursor: String) -> Result<(), anyhow::Error> {
-    // FIXME: Handling of the cursor is missing here. It should be saved each time
-    // a full block has been correctly processed/persisted. The saving location
-    // is your responsibility.
-    //
-    // By making it persistent, we ensure that if we crash, on startup we are
-    // going to read it back from database and start back our SubstreamsStream
-    // with it ensuring we are continuously streaming without ever losing a single
-    // element.
-    Ok(())
-}
+async fn load_persisted_cursor(
+    client: &clickhouse::Client,
+    id: &str,
+) -> Result<Option<String>, anyhow::Error> {
+    let cursor = client.query(&format!(
+        "SELECT * FROM cursors WHERE id = '{}' ORDER BY block_num DESC",
+        id
+    ));
+    let cursor = cursor.fetch_optional::<Cursor>().await?;
 
-fn load_persisted_cursor() -> Result<Option<String>, anyhow::Error> {
-    // FIXME: Handling of the cursor is missing here. It should be loaded from
-    // somewhere (local file, database, cloud storage) and then `SubstreamStream` will
-    // be able correctly resume from the right block.
-    Ok(None)
+    Ok(cursor.map(|c| c.cursor().clone()))
 }
 
 fn read_package(file: &str) -> Result<Package, anyhow::Error> {
