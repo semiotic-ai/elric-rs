@@ -1,16 +1,20 @@
 use anyhow::{format_err, Context, Error};
+use clap::Parser;
 use clickhouse::Client;
 use futures03::future::join_all;
 use futures03::StreamExt;
 use hyper_tls::HttpsConnector;
 use loader::Cursor;
 use pb::sf::substreams::v1::Package;
+use url::Url;
 
 use prost::Message;
+use std::collections::VecDeque;
 use std::{collections::HashMap, env, process::exit, sync::Arc, time::Duration};
 use substreams::SubstreamsEndpoint;
 use substreams_database_change::pb::database::Field;
 use substreams_stream::{BlockResponse, SubstreamsStream};
+use thiserror::Error;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::watch;
@@ -26,29 +30,82 @@ mod substreams_stream;
 mod table_info;
 mod u256;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    database_url: Url,
+    id: String,
+    #[arg(long, default_value = "substreams.spkg")]
+    package_file: String,
+    #[arg(long, default_value = "db_out")]
+    module: String,
+    #[arg(
+        long,
+        short,
+        default_value = "https://mainnet.eth.streamingfast.io:443"
+    )]
+    endpoint_url: String,
+    #[arg(long)]
+    token: Option<String>,
+}
+
+#[derive(Error, Debug)]
+enum ElricError {
+    #[error("Token not found")]
+    TokenNotFound,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let args = env::args();
-    if args.len() != 4 {
-        println!("usage: stream <endpoint> <spkg> <module>");
-        println!();
-        println!("The environment variable SUBSTREAMS_API_TOKEN must be set also");
-        println!("and should contain a valid Substream API token.");
-        exit(1);
-    }
+    let cli = Cli::parse();
 
-    let endpoint_url = env::args().nth(1).unwrap();
-    let package_file = env::args().nth(2).unwrap();
-    let module_name = env::args().nth(3).unwrap();
+    let endpoint_url = cli.endpoint_url;
+    let package_file = cli.package_file;
+    let module_name = cli.module;
+    let id = cli.id;
 
-    let token_env = env::var("SUBSTREAMS_API_TOKEN").unwrap_or("".to_string());
-    let mut token: Option<String> = None;
-    if token_env.len() > 0 {
-        token = Some(token_env);
+    let token = match env::var("SUBSTREAMS_API_TOKEN").ok() {
+        Some(token) => token,
+        None => cli.token.ok_or(ElricError::TokenNotFound)?,
+    };
+
+    const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let https = HttpsConnector::new();
+
+    let client = hyper::Client::builder()
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .build::<_, hyper::Body>(https);
+
+    let database_url = cli.database_url;
+    let username = database_url.username();
+    let password = database_url.password().unwrap_or("");
+    let database = database_url
+        .path_segments()
+        .map(|c| c.filter(|s| !s.is_empty()).collect::<VecDeque<_>>())
+        .map(|mut v| v.pop_front().unwrap_or("default"))
+        .unwrap_or("default");
+    let url = format!(
+        "{}://{}{}",
+        database_url.scheme(),
+        database_url.host_str().unwrap_or(""),
+        database_url
+            .port_or_known_default()
+            .map(|p| format!(":{}", p))
+            .unwrap_or("".to_string())
+    );
+
+    let mut client = Client::with_http_client(client)
+        .with_url(url)
+        .with_user(username)
+        .with_password(password)
+        .with_database(database);
+    for query in database_url.query_pairs() {
+        client = client.with_option(query.0, query.1);
     }
 
     let package = read_package(&package_file)?;
-    let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, token).await?);
+    let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, Some(token)).await?);
 
     let cursor: Option<String> = load_persisted_cursor(&client, &id).await?;
 
@@ -61,21 +118,6 @@ async fn main() -> Result<(), Error> {
         0,
         0,
     );
-
-    const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
-
-    let https = HttpsConnector::new();
-
-    let client = hyper::Client::builder()
-        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
-        .build::<_, hyper::Body>(https);
-
-    let client = Client::with_http_client(client)
-        .with_url("https://urhsel0sah.us-central1.gcp.clickhouse.cloud:8443")
-        .with_user("default")
-        .with_password("jD~ycmD6._.ab")
-        .with_option("async_insert", "1")
-        .with_option("wait_for_async_insert", "0");
 
     let table_info = get_table_information(&client).await?;
 
