@@ -2,6 +2,7 @@
 name = "elric-rs"
 version = "1.0.1"
 edition = "2021"
+description = "A client for using substreams with Clickhouse database."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
