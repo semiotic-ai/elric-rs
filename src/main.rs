@@ -1,5 +1,5 @@
 use anyhow::{format_err, Context, Error};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use clickhouse::Client;
 use futures03::future::join_all;
 use futures03::StreamExt;
@@ -10,6 +10,7 @@ use url::Url;
 
 use prost::Message;
 use std::collections::VecDeque;
+use std::fs;
 use std::{collections::HashMap, env, process::exit, sync::Arc, time::Duration};
 use substreams::SubstreamsEndpoint;
 use substreams_database_change::pb::database::Field;
@@ -32,20 +33,32 @@ mod table_info;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    database_url: Url,
-    id: String,
-    #[arg(long, default_value = "substreams.spkg")]
-    package_file: String,
-    #[arg(long, default_value = "db_out")]
-    module: String,
-    #[arg(
-        long,
-        short,
-        default_value = "https://mainnet.eth.streamingfast.io:443"
-    )]
-    endpoint_url: String,
-    #[arg(long)]
-    token: Option<String>,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Run {
+        database_url: Url,
+        id: String,
+        #[arg(long, default_value = "substreams.spkg")]
+        package_file: String,
+        #[arg(long, default_value = "db_out")]
+        module: String,
+        #[arg(
+            long,
+            short,
+            default_value = "https://mainnet.eth.streamingfast.io:443"
+        )]
+        endpoint_url: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
+    Setup {
+        database_url: Url,
+        file_name: String,
+    },
 }
 
 #[derive(Error, Debug)]
@@ -58,51 +71,40 @@ enum ElricError {
 async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
 
-    let endpoint_url = cli.endpoint_url;
-    let package_file = cli.package_file;
-    let module_name = cli.module;
-    let id = cli.id;
 
-    let token = match env::var("SUBSTREAMS_API_TOKEN").ok() {
-        Some(token) => token,
-        None => cli.token.ok_or(ElricError::TokenNotFound)?,
-    };
-
-    const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
-
-    let https = HttpsConnector::new();
-
-    let client = hyper::Client::builder()
-        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
-        .build::<_, hyper::Body>(https);
-
-    let database_url = cli.database_url;
-    let username = database_url.username();
-    let password = database_url.password().unwrap_or("");
-    let database = database_url
-        .path_segments()
-        .map(|c| c.filter(|s| !s.is_empty()).collect::<VecDeque<_>>())
-        .map(|mut v| v.pop_front().unwrap_or("default"))
-        .unwrap_or("default");
-    let url = format!(
-        "{}://{}{}",
-        database_url.scheme(),
-        database_url.host_str().unwrap_or(""),
-        database_url
-            .port_or_known_default()
-            .map(|p| format!(":{}", p))
-            .unwrap_or("".to_string())
-    );
-
-    let mut client = Client::with_http_client(client)
-        .with_url(url)
-        .with_user(username)
-        .with_password(password)
-        .with_database(database);
-    for query in database_url.query_pairs() {
-        client = client.with_option(query.0, query.1);
+    match cli.command {
+        Commands::Setup { database_url, file_name } => {
+            let client = load_database(database_url);
+            setup_schema(&client, file_name).await?;
+            println!("Schema created");
+        }
+        Commands::Run {
+            id,
+            database_url,
+            package_file,
+            module: module_name,
+            endpoint_url,
+            token,
+        } => {
+            let client = load_database(database_url);
+            let token = match env::var("SUBSTREAMS_API_TOKEN").ok() {
+                Some(token) => token,
+                None => token.ok_or(ElricError::TokenNotFound)?,
+            };
+            run(client, id, package_file, module_name, endpoint_url, token).await?;
+        }
     }
+    Ok(())
+}
 
+async fn run(
+    client: clickhouse::Client,
+    id: String,
+    package_file: String,
+    module: String,
+    endpoint_url: String,
+    token: String,
+) -> Result<(), Error> {
     let package = read_package(&package_file)?;
     let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, Some(token)).await?);
 
@@ -112,7 +114,7 @@ async fn main() -> Result<(), Error> {
         endpoint.clone(),
         cursor,
         package.modules.clone(),
-        module_name.to_string(),
+        module,
         // Start/stop block are not handled within this project, feel free to play with it
         0,
         0,
@@ -189,7 +191,55 @@ async fn main() -> Result<(), Error> {
 
     println!("Gracefully shutting down...");
     loader.end().await;
+    Ok(())
+}
 
+fn load_database(database_url: Url) -> Client {
+    let username = database_url.username();
+    let password = database_url.password().unwrap_or("");
+    let database = database_url
+        .path_segments()
+        .map(|c| c.filter(|s| !s.is_empty()).collect::<VecDeque<_>>())
+        .map(|mut v| v.pop_front().unwrap_or("default"))
+        .unwrap_or("default");
+    let url = format!(
+        "{}://{}{}",
+        database_url.scheme(),
+        database_url.host_str().unwrap_or(""),
+        database_url
+            .port_or_known_default()
+            .map(|p| format!(":{}", p))
+            .unwrap_or("".to_string())
+    );
+
+    const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let https = HttpsConnector::new();
+
+    let client = hyper::Client::builder()
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .build::<_, hyper::Body>(https);
+
+    let mut client = Client::with_http_client(client)
+        .with_url(url)
+        .with_user(username)
+        .with_password(password)
+        .with_database(database);
+    for query in database_url.query_pairs() {
+        client = client.with_option(query.0, query.1);
+    }
+    client
+}
+
+async fn setup_schema(client: &Client, file: String) -> Result<(), Error> {
+    let schema = fs::read_to_string(file)?;
+    for stmt in schema.split(";") {
+        let stmt = stmt.trim();
+        if !stmt.is_empty() {
+            client.query(stmt).execute().await?;
+        }
+    }
+    // client.query(&schema).execute().await?;
     Ok(())
 }
 
