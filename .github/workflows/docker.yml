@@ -35,5 +35,5 @@ jobs:
             TARGET=${{ matrix.contract }}
           push: true
           tags: | 
-              us-central1-docker.pkg.dev/graphplots/elric-rs:latest
-              us-central1-docker.pkg.dev/graphplots/elric-rs:${{ steps.get-tag.outputs.short_ref }}
+              us-central1-docker.pkg.dev/graphplots/elric-rs/app:latest
+              us-central1-docker.pkg.dev/graphplots/elric-rs/app:${{ steps.get-tag.outputs.short_ref }}
