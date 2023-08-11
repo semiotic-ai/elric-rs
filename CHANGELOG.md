@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/semiotic-ai/elric-rs/compare/v1.1.0...v1.1.1) (2023-08-11)
+
+
+### Bug Fixes
+
+* **docker:** use openssl vendored ([855bd89](https://github.com/semiotic-ai/elric-rs/commit/855bd89009b337cc97acb571c3f22c44336b9d4a))
+
 ## [1.1.0](https://github.com/semiotic-ai/elric-rs/compare/v1.0.4...v1.1.0) (2023-08-11)
 
 
