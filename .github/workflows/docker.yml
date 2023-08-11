@@ -18,7 +18,7 @@ jobs:
           token_format: access_token
           workload_identity_provider: projects/661473808279/locations/global/workloadIdentityPools/github-actions/providers/gh-provider
           service_account: artifact-uploader@graphplots.iam.gserviceaccount.com
-          access_token_lifetime: 300s
+          access_token_lifetime: 600s
       - name: Login to Artifact Registry
         uses: docker/login-action@v1
         with:
