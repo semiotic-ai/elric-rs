@@ -81,7 +81,6 @@ impl DatabaseLoader {
 
         // split between tables
         let splitted_inserts = split_table_changes(database_changes.table_changes);
-        // let mut loader = loader.lock().unwrap();
 
         for (table, changes) in splitted_inserts {
             let table_info = self
