@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/semiotic-ai/elric-rs/compare/v1.0.4...v1.1.0) (2023-08-11)
+
+
+### Features
+
+* **setup:** add setup command ([22cfce2](https://github.com/semiotic-ai/elric-rs/commit/22cfce2a30fd37cb6adbc187354b2fc4f554cf2a))
+
 ## [1.0.4](https://github.com/semiotic-ai/elric-rs/compare/v1.0.3...v1.0.4) (2023-08-11)
 
 
