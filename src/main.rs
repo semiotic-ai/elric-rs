@@ -28,7 +28,6 @@ mod pb;
 mod substreams;
 mod substreams_stream;
 mod table_info;
-mod u256;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
