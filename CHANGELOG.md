@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/semiotic-ai/elric-rs/compare/v1.0.2...v1.0.3) (2023-08-11)
+
+
+### Bug Fixes
+
+* update token lifetime ([0443b9a](https://github.com/semiotic-ai/elric-rs/commit/0443b9a4854216680146d3f5d86d790b34fa3f98))
+
 ## [1.0.2](https://github.com/semiotic-ai/elric-rs/compare/v1.0.1...v1.0.2) (2023-08-11)
 
 
