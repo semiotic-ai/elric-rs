@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/semiotic-ai/elric-rs/compare/v1.0.3...v1.0.4) (2023-08-11)
+
+
+### Bug Fixes
+
+* update application name in docker ([d98d353](https://github.com/semiotic-ai/elric-rs/commit/d98d35339ba9ac18ec3600e2aaaab7726b1cea4f))
+
 ## [1.0.3](https://github.com/semiotic-ai/elric-rs/compare/v1.0.2...v1.0.3) (2023-08-11)
 
 
