@@ -29,6 +29,7 @@ strum = "0.25"
 strum_macros = "0.25"
 clap = { version = "4.3.21", features = ["derive"] }
 url = "2.4.0"
+openssl = { version = "*", features = ["vendored"] }
 
 
 [patch.crates-io]
