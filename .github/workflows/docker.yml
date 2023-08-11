@@ -1,0 +1,39 @@
+name: docker
+on:  
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - id: auth
+        name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v0
+        with:
+          token_format: access_token
+          workload_identity_provider: projects/661473808279/locations/global/workloadIdentityPools/github-actions/providers/gh-provider
+          service_account: artifact-uploader@graphplots.iam.gserviceaccount.com
+          access_token_lifetime: 300s
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v1
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+      - name: Get tag
+        id: get-tag
+        run: echo ::set-output name=short_ref::${GITHUB_REF#refs/*/}
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          build-args: |
+            TARGET=${{ matrix.contract }}
+          push: true
+          tags: | 
+              us-central1-docker.pkg.dev/graphplots/elric-rs:latest
+              us-central1-docker.pkg.dev/graphplots/elric-rs:${{ steps.get-tag.outputs.short_ref }}
