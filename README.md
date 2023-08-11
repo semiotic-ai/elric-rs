@@ -1,5 +1,6 @@
 ## Substreams Sink Rust
 
+
 This repository show cases a functional base Rust project that consumes a Substreams `.spkg` (local file only).
 
 To run:
