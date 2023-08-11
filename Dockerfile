@@ -13,11 +13,11 @@ RUN \
   cp /app/target/release/elric-rs /app/elric-rs
 
 
-FROM alpine:3.17.3 as app
+FROM rust:1.71.0-slim as app
 
 RUN mkdir /app
 
-RUN apk add libc6-compat
+RUN apt-get update && apt-get install -y extra-runtime-dependencies && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/elric-rs /app/elric-rs
 
