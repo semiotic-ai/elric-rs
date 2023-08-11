@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use anyhow::{Context, Error};
 use clickhouse::{insert::Insert, inserter::Inserter, Client, Row};
@@ -15,10 +18,12 @@ use crate::{
 };
 
 pub struct DatabaseLoader {
+    client: Client,
     id: String,
     tables: HashMap<String, DynamicTable>,
     inserters: HashMap<String, Inserter<DynamicTable>>,
     cursor: Insert<Cursor>,
+    touched_tables: HashSet<String>,
 }
 
 #[derive(Row, Serialize, Deserialize)]
@@ -61,10 +66,12 @@ impl DatabaseLoader {
             .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)));
 
         Self {
+            client,
             id,
             tables,
             inserters,
             cursor,
+            touched_tables: HashSet::new(),
         }
     }
 
@@ -113,17 +120,32 @@ impl DatabaseLoader {
         Ok(())
     }
 
-    pub fn process_block_undo_signal(
-        &self,
+    pub async fn process_block_undo_signal(
+        &mut self,
         _undo_signal: &BlockUndoSignal,
     ) -> Result<(), anyhow::Error> {
-        // `BlockUndoSignal` must be treated as "delete every data that has been recorded after
-        // block height specified by block in BlockUndoSignal". In the example above, this means
-        // you must delete changes done by `Block #7b` and `Block #6b`. The exact details depends
-        // on your own logic. If for example all your added record contain a block number, a
-        // simple way is to do `delete all records where block_num > 5` which is the block num
-        // received in the `BlockUndoSignal` (this is true for append only records, so when only `INSERT` are allowed).
-        unimplemented!("you must implement some kind of block undo handling, or request only final blocks (tweak substreams_stream.rs)")
+        let block_num = _undo_signal.last_valid_block.as_ref().unwrap().number;
+        for table in self.touched_tables.drain().collect::<Vec<_>>() {
+            self.delete_table_block_greater_than(table, block_num)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn delete_table_block_greater_than(
+        &mut self,
+        table: String,
+        block: u64,
+    ) -> Result<(), anyhow::Error> {
+        self.client
+            .query(&format!(
+                "ALTER TABLE {} DELETE WHERE block_num > {}",
+                table, block
+            ))
+            .execute()
+            .await?;
+
+        Ok(())
     }
 
     pub async fn persist_cursor(
@@ -146,7 +168,8 @@ impl DatabaseLoader {
         self.inserters.get_mut(table_name)
     }
 
-    fn get_table_info(&self, table_name: &str) -> Option<&DynamicTable> {
+    fn get_table_info(&mut self, table_name: &str) -> Option<&DynamicTable> {
+        self.touched_tables.insert(table_name.into());
         self.tables.get(table_name)
     }
 

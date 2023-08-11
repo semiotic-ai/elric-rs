@@ -142,8 +142,8 @@ async fn main() -> Result<(), Error> {
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
         loop {
             select! {
-                _ = sigterm.recv() => println!("Recieve SIGTERM"),
-                _ = sigint.recv() => println!("Recieve SIGTERM"),
+                _ = sigterm.recv() => {},
+                _ = sigint.recv() => {},
             };
             stop_tx.send(()).unwrap();
         }
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Error> {
                     // persist_cursor(data.cursor)?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                    loader.process_block_undo_signal(&undo_signal)?;
+                    loader.process_block_undo_signal(&undo_signal).await?;
                     loader
                         .persist_cursor(
                             undo_signal.last_valid_cursor,
@@ -188,6 +188,7 @@ async fn main() -> Result<(), Error> {
         }
     }
 
+    println!("Gracefully shutting down...");
     loader.end().await;
 
     Ok(())
