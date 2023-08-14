@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use clickhouse::Client;
 use futures03::future::join_all;
 use futures03::StreamExt;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnectorBuilder;
 use loader::Cursor;
 use pb::sf::substreams::v1::Package;
 use url::Url;
@@ -71,9 +71,11 @@ enum ElricError {
 async fn main() -> Result<(), Error> {
     let cli = Cli::parse();
 
-
     match cli.command {
-        Commands::Setup { database_url, file_name } => {
+        Commands::Setup {
+            database_url,
+            file_name,
+        } => {
             let client = load_database(database_url);
             setup_schema(&client, file_name).await?;
             println!("Schema created");
@@ -214,7 +216,11 @@ fn load_database(database_url: Url) -> Client {
 
     const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
-    let https = HttpsConnector::new();
+    let https = HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_only()
+        .enable_http1()
+        .build();
 
     let client = hyper::Client::builder()
         .pool_idle_timeout(POOL_IDLE_TIMEOUT)
