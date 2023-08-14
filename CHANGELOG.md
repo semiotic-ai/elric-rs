@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/semiotic-ai/elric-rs/compare/v1.1.1...v1.1.2) (2023-08-14)
+
+
+### Bug Fixes
+
+* **docker:** update readme ([d22135a](https://github.com/semiotic-ai/elric-rs/commit/d22135aed3da748daca1dee842069bdd78ee10c0))
+* **ssl:** remove openssl dependency ([eefa875](https://github.com/semiotic-ai/elric-rs/commit/eefa875d619aed8a95b95065e33fbb639c15db6c))
+
 ## [1.1.1](https://github.com/semiotic-ai/elric-rs/compare/v1.1.0...v1.1.1) (2023-08-11)
 
 
