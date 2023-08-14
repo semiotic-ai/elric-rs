@@ -14,7 +14,7 @@ RUN \
   cp /app/target/release/elric-rs /app/elric-rs
 
 
-FROM alpine:3.17.3 as app
+FROM rust:1.71.0-slim as app
 
 RUN mkdir /app
 
