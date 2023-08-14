@@ -18,7 +18,7 @@ prost = "0.11"
 prost-types = "0.11"
 thiserror = "1"
 substreams-database-change = "1.2.1"
-clickhouse = { version = "0.11.5", features = ["time"] }
+clickhouse = { version = "0.11.5", default-features = false, features = ["time", "lz4"] }
 hyper = "0.14.27"
 serde = { version = "1.0.171", features = ["derive"] }
 primitive-types = "0.12.1"
