@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.5](https://github.com/semiotic-ai/elric-rs/compare/v1.1.4...v1.1.5) (2023-08-14)
+
+
+### Bug Fixes
+
+* **schema:** use schema instead of using default ([dbc7f7a](https://github.com/semiotic-ai/elric-rs/commit/dbc7f7a029c17d566b9db74be01bc48533458cdc))
+
 ## [1.1.4](https://github.com/semiotic-ai/elric-rs/compare/v1.1.3...v1.1.4) (2023-08-14)
 
 
