@@ -127,7 +127,7 @@ async fn run(
     let dynamic_tables = table_info
         .iter()
         .map(|table| async {
-            let mut columns = get_columns(&client, "default", &table.table_name)
+            let mut columns = get_columns(&client, &table.table_schema, &table.table_name)
                 .await
                 .expect("could not find columns");
             columns.sort();

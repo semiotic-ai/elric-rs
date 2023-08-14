@@ -24,8 +24,11 @@ pub enum ColumnType {
     Int64,
     Int128,
     Int256,
+    Float32,
+    Float64,
     DateTime,
     Bool,
+    LowCardinality,
 }
 
 pub struct DynamicInsert {
@@ -71,6 +74,14 @@ impl Serialize for DynamicInsert {
             if let Some(data) = data {
                 match column.data_type {
                     ColumnType::String => serializer.serialize_element(data)?,
+                    ColumnType::Float32 => {
+                        let value = &data.parse::<f32>().unwrap();
+                        serializer.serialize_element(value)?;
+                    },
+                    ColumnType::Float64 => {
+                        let value = &data.parse::<f64>().unwrap();
+                        serializer.serialize_element(value)?;
+                    },
                     ColumnType::UInt8 => {
                         let value = &data.parse::<u8>().unwrap();
                         serializer.serialize_element(value)?;
@@ -135,6 +146,9 @@ impl Serialize for DynamicInsert {
                             .unwrap()
                             .timestamp() as i32;
                         serializer.serialize_element(&time)?;
+                    }
+                    ColumnType::LowCardinality => {
+                        unimplemented!("LowCardinality not implemented")
                     }
                 }
             }
