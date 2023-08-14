@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/semiotic-ai/elric-rs/compare/v1.1.2...v1.1.3) (2023-08-14)
+
+
+### Bug Fixes
+
+* **ssl:** remove all dependencies ([8ba7d3f](https://github.com/semiotic-ai/elric-rs/commit/8ba7d3fe61ef47903a30dc756e3942785291a710))
+
 ## [1.1.2](https://github.com/semiotic-ai/elric-rs/compare/v1.1.1...v1.1.2) (2023-08-14)
 
 
