@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/semiotic-ai/elric-rs/compare/v1.1.3...v1.1.4) (2023-08-14)
+
+
+### Bug Fixes
+
+* **docker:** use slim instead of alpine for now ([b843f85](https://github.com/semiotic-ai/elric-rs/commit/b843f853ef77b8c807e6c16398ace8a7dbdbb4b3))
+
 ## [1.1.3](https://github.com/semiotic-ai/elric-rs/compare/v1.1.2...v1.1.3) (2023-08-14)
 
 
