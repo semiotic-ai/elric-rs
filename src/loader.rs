@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, VecDeque},
     time::Duration,
 };
 
@@ -13,17 +13,18 @@ use substreams_database_change::pb::database::{
 
 use crate::{
     convert_field_to_hash,
-    pb::sf::substreams::rpc::v2::{BlockScopedData, BlockUndoSignal},
+    pb::sf::substreams::rpc::v2::BlockScopedData,
     table_info::{DynamicInsert, DynamicTable},
 };
 
+const BUFFER_LEN: usize = 12;
+
 pub struct DatabaseLoader {
-    client: Client,
     id: String,
     tables: HashMap<String, DynamicTable>,
     inserters: HashMap<String, Inserter<DynamicTable>>,
     cursor: Insert<Cursor>,
-    touched_tables: HashSet<String>,
+    buffer: VecDeque<BlockScopedData>,
 }
 
 #[derive(Row, Serialize, Deserialize)]
@@ -50,7 +51,6 @@ impl DatabaseLoader {
                 .inserter_with_schema(&table_name, table.clone())
                 .expect("inserter")
                 .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)))
-                // .with_max_entries(750_000)
                 .with_period(Some(Duration::from_secs(15)));
             inserters.insert(table_name, inserter);
         });
@@ -66,20 +66,54 @@ impl DatabaseLoader {
             .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)));
 
         Self {
-            client,
             id,
             tables,
             inserters,
             cursor,
-            touched_tables: HashSet::new(),
+            buffer: VecDeque::new(),
         }
     }
 
-    pub async fn process_block_scoped_data(&mut self, data: &BlockScopedData) -> Result<(), Error> {
+    fn get_final_blocks_from_buffer(&mut self, data: BlockScopedData) -> Vec<BlockScopedData> {
+        let mut final_blocks = vec![];
+
+        let final_block_index = self
+            .buffer
+            .iter()
+            .rev()
+            .position(|b| b.clock.as_ref().unwrap().number <= data.final_block_height)
+            .map(|i| self.buffer.len() - i - 1);
+
+        let is_full_capacity = self.buffer.len() >= BUFFER_LEN;
+
+        if is_full_capacity || final_block_index.is_some() {
+            let len = match final_block_index {
+                Some(i) => i,
+                None => self.buffer.len() - BUFFER_LEN,
+            };
+
+            final_blocks.extend(self.buffer.drain(0..=len));
+        }
+
+        if data.clock.as_ref().unwrap().number < data.final_block_height {
+            final_blocks.push(data);
+        } else {
+            self.buffer.push_back(data);
+        }
+        final_blocks
+    }
+
+    pub async fn process_block_scoped_data(&mut self, data: BlockScopedData) -> Result<(), Error> {
+        for block in self.get_final_blocks_from_buffer(data) {
+            self.process_final_blocks(block).await?;
+        }
+        Ok(())
+    }
+
+    async fn process_final_blocks(&mut self, data: BlockScopedData) -> Result<(), Error> {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
         let database_changes = DatabaseChanges::decode(output.value.as_slice())?;
 
-        // split between tables
         let splitted_inserts = split_table_changes(database_changes.table_changes);
 
         for (table, changes) in splitted_inserts {
@@ -119,32 +153,18 @@ impl DatabaseLoader {
         Ok(())
     }
 
-    pub async fn process_block_undo_signal(
-        &mut self,
-        _undo_signal: &BlockUndoSignal,
-    ) -> Result<(), anyhow::Error> {
-        let block_num = _undo_signal.last_valid_block.as_ref().unwrap().number;
-        for table in self.touched_tables.drain().collect::<Vec<_>>() {
-            self.delete_table_block_greater_than(table, block_num)
-                .await?;
+    pub fn process_block_undo_signal(&mut self, block_num_signal: u64) {
+        let final_block_index = self
+            .buffer
+            .iter()
+            .rev()
+            .position(|b| block_num_signal == b.clock.as_ref().unwrap().number)
+            .map(|i| self.buffer.len() - i);
+
+        if let Some(index) = final_block_index {
+            println!("index: {:?}", index..);
+            self.buffer.drain(index..);
         }
-        Ok(())
-    }
-
-    async fn delete_table_block_greater_than(
-        &mut self,
-        table: String,
-        block: u64,
-    ) -> Result<(), anyhow::Error> {
-        self.client
-            .query(&format!(
-                "ALTER TABLE {} DELETE WHERE block_num > {}",
-                table, block
-            ))
-            .execute()
-            .await?;
-
-        Ok(())
     }
 
     pub async fn persist_cursor(
@@ -168,7 +188,6 @@ impl DatabaseLoader {
     }
 
     fn get_table_info(&mut self, table_name: &str) -> Option<&DynamicTable> {
-        self.touched_tables.insert(table_name.into());
         self.tables.get(table_name)
     }
 
@@ -195,4 +214,98 @@ fn split_table_changes(table_changes: Vec<TableChange>) -> HashMap<String, Vec<T
     }
 
     table_map
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, VecDeque};
+
+    use clickhouse::{test, Client};
+
+    use crate::{
+        loader::BUFFER_LEN,
+        pb::sf::substreams::{rpc::v2::BlockScopedData, v1::Clock},
+    };
+
+    use super::DatabaseLoader;
+
+    #[tokio::test]
+    async fn test_undo_block_signal() {
+        let mut buffer = VecDeque::new();
+        for i in 0..BUFFER_LEN {
+            buffer.push_back(BlockScopedData {
+                clock: Some(Clock {
+                    number: i as u64,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        }
+        let mock = test::Mock::new();
+        let client = Client::default().with_url(mock.url());
+        let cursor = client.insert("test").unwrap();
+        let mut loader = DatabaseLoader {
+            id: "test".into(),
+            buffer,
+            tables: HashMap::new(),
+            inserters: HashMap::new(),
+            cursor,
+        };
+        let v = 8;
+        loader.process_block_undo_signal(v);
+        let result = loader
+            .buffer
+            .iter()
+            .map(|b| b.clock.as_ref().unwrap().number)
+            .collect::<Vec<_>>();
+        assert_eq!(result, (0..=v).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_buffer() {
+        let mock = test::Mock::new();
+        let client = Client::default().with_url(mock.url());
+        let cursor = client.insert("test").unwrap();
+        let mut loader = DatabaseLoader {
+            id: "test".into(),
+            buffer: VecDeque::new(),
+            tables: HashMap::new(),
+            inserters: HashMap::new(),
+            cursor,
+        };
+        for i in 0..10 {
+            let data = BlockScopedData {
+                clock: Some(Clock {
+                    number: i as u64,
+                    ..Default::default()
+                }),
+                final_block_height: 10,
+                ..Default::default()
+            };
+            let final_blocks = loader.get_final_blocks_from_buffer(data);
+            assert_eq!(final_blocks.len(), 1);
+        }
+        for i in 0..BUFFER_LEN {
+            let data = BlockScopedData {
+                clock: Some(Clock {
+                    number: (i + 1) as u64,
+                    ..Default::default()
+                }),
+                final_block_height: 0,
+                ..Default::default()
+            };
+            let final_blocks = loader.get_final_blocks_from_buffer(data);
+            assert_eq!(final_blocks.len(), 0);
+        }
+        let data = BlockScopedData {
+            clock: Some(Clock {
+                number: (BUFFER_LEN + 2) as u64,
+                ..Default::default()
+            }),
+            final_block_height: 0,
+            ..Default::default()
+        };
+        let final_blocks = loader.get_final_blocks_from_buffer(data);
+        assert_eq!(final_blocks.len(), 1);
+    }
 }

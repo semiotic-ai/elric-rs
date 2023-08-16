@@ -117,7 +117,6 @@ async fn run(
         cursor,
         package.modules.clone(),
         module,
-        // Start/stop block are not handled within this project, feel free to play with it
         0,
         0,
     );
@@ -165,14 +164,16 @@ async fn run(
                 Some(Ok(BlockResponse::New(data))) => {
                     let block_num = data.clock.as_ref().unwrap().number;
                     let block_id = data.clock.as_ref().unwrap().id.clone();
-                    loader.process_block_scoped_data(&data).await?;
+                    let cursor = data.cursor.clone();
+                    loader.process_block_scoped_data(data).await?;
                     loader
-                        .persist_cursor(data.cursor, block_num, block_id)
+                        .persist_cursor(cursor, block_num, block_id)
                         .await?;
                     // persist_cursor(data.cursor)?;
                 }
                 Some(Ok(BlockResponse::Undo(undo_signal))) => {
-                    loader.process_block_undo_signal(&undo_signal).await?;
+                    let block_num_signal = undo_signal.last_valid_block.as_ref().unwrap().number;
+                    loader.process_block_undo_signal(block_num_signal);
                     loader
                         .persist_cursor(
                             undo_signal.last_valid_cursor,
