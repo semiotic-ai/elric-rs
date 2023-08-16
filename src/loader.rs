@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Error};
-use clickhouse::{insert::Insert, inserter::Inserter, Client, Row};
+use clickhouse::{inserter::Inserter, Client, Row};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use substreams_database_change::pb::database::{
@@ -23,7 +23,7 @@ pub struct DatabaseLoader {
     id: String,
     tables: HashMap<String, DynamicTable>,
     inserters: HashMap<String, Inserter<DynamicTable>>,
-    cursor: Insert<Cursor>,
+    cursor: Inserter<Cursor>,
     buffer: VecDeque<BlockScopedData>,
 }
 
@@ -61,9 +61,10 @@ impl DatabaseLoader {
             .collect();
 
         let cursor = client
-            .insert("cursors")
+            .inserter("cursors")
             .expect("error while creating cursors inserter")
-            .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)));
+            .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)))
+            .with_period(Some(Duration::from_secs(15)));
 
         Self {
             id,
@@ -185,6 +186,7 @@ impl DatabaseLoader {
             block_id,
         };
         self.cursor.write(&cursor).await?;
+        self.cursor.commit().await?;
         Ok(())
     }
 
@@ -248,7 +250,7 @@ mod tests {
         }
         let mock = test::Mock::new();
         let client = Client::default().with_url(mock.url());
-        let cursor = client.insert("test").unwrap();
+        let cursor = client.inserter("test").unwrap();
         let mut loader = DatabaseLoader {
             id: "test".into(),
             buffer,
@@ -270,7 +272,7 @@ mod tests {
     async fn test_buffer() {
         let mock = test::Mock::new();
         let client = Client::default().with_url(mock.url());
-        let cursor = client.insert("test").unwrap();
+        let cursor = client.inserter("test").unwrap();
         let mut loader = DatabaseLoader {
             id: "test".into(),
             buffer: VecDeque::new(),
