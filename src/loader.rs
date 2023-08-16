@@ -143,6 +143,11 @@ impl DatabaseLoader {
             inserter.commit().await.context("Inserter end")?;
         }
 
+        let block_num = data.clock.as_ref().unwrap().number;
+        let block_id = data.clock.as_ref().unwrap().id.clone();
+        let cursor = data.cursor.clone();
+        self.persist_cursor(cursor, block_num, block_id).await?;
+
         println!(
             "Block #{} - Payload {} ({} bytes)",
             data.clock.as_ref().unwrap().number,
