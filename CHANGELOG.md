@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/semiotic-ai/elric-rs/compare/v1.1.5...v1.2.0) (2023-08-16)
+
+
+### Features
+
+* add undo buffer and tests ([a6ef8ff](https://github.com/semiotic-ai/elric-rs/commit/a6ef8ff948a235161d1bd63210a6b66dadea0fbf))
+* use final_block false ([59abe85](https://github.com/semiotic-ai/elric-rs/commit/59abe85622b1e0502a2c5c6b46a04e8c17581809))
+
+
+### Bug Fixes
+
+* **table_info:** add decimal to unimplemented ([a6f6ece](https://github.com/semiotic-ai/elric-rs/commit/a6f6ece3e75dbd56651dcc76e9ab4805e4be6fdf))
+
 ## [1.1.5](https://github.com/semiotic-ai/elric-rs/compare/v1.1.4...v1.1.5) (2023-08-14)
 
 
