@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/semiotic-ai/elric-rs/compare/v1.2.0...v1.2.1) (2023-08-16)
+
+
+### Bug Fixes
+
+* **cursor:** update cursor only in processed block ([4b97fcb](https://github.com/semiotic-ai/elric-rs/commit/4b97fcb14b6086640765ca82776e8ab5e96a6342))
+* **cursor:** use inserter with timeout ([5467b6c](https://github.com/semiotic-ai/elric-rs/commit/5467b6c87e0f11bdc94db888804bcced4ca827ee))
+
 ## [1.2.0](https://github.com/semiotic-ai/elric-rs/compare/v1.1.5...v1.2.0) (2023-08-16)
 
 
