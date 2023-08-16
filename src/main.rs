@@ -117,7 +117,6 @@ async fn run(
         cursor,
         package.modules.clone(),
         module,
-        // Start/stop block are not handled within this project, feel free to play with it
         0,
         0,
     );

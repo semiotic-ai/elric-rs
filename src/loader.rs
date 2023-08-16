@@ -20,12 +20,10 @@ use crate::{
 const BUFFER_LEN: usize = 12;
 
 pub struct DatabaseLoader {
-    // client: Client,
     id: String,
     tables: HashMap<String, DynamicTable>,
     inserters: HashMap<String, Inserter<DynamicTable>>,
     cursor: Insert<Cursor>,
-    // touched_tables: HashSet<String>,
     buffer: VecDeque<BlockScopedData>,
 }
 
@@ -53,7 +51,6 @@ impl DatabaseLoader {
                 .inserter_with_schema(&table_name, table.clone())
                 .expect("inserter")
                 .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)))
-                // .with_max_entries(750_000)
                 .with_period(Some(Duration::from_secs(15)));
             inserters.insert(table_name, inserter);
         });
@@ -69,12 +66,10 @@ impl DatabaseLoader {
             .with_timeouts(Some(Duration::from_secs(5)), Some(Duration::from_secs(20)));
 
         Self {
-            // client,
             id,
             tables,
             inserters,
             cursor,
-            // touched_tables: HashSet::new(),
             buffer: VecDeque::new(),
         }
     }
@@ -92,13 +87,10 @@ impl DatabaseLoader {
         let is_full_capacity = self.buffer.len() >= BUFFER_LEN;
 
         if is_full_capacity || final_block_index.is_some() {
-            println!("is_full_capacity: {}", is_full_capacity);
-            println!("final_block_index: {:?}", final_block_index);
             let len = match final_block_index {
                 Some(i) => i,
                 None => self.buffer.len() - BUFFER_LEN,
             };
-            println!("Draining buffer from 0..{}", len);
 
             final_blocks.extend(self.buffer.drain(0..=len));
         }
@@ -106,10 +98,6 @@ impl DatabaseLoader {
         if data.clock.as_ref().unwrap().number < data.final_block_height {
             final_blocks.push(data);
         } else {
-            println!(
-                "Receive Block, adding to buffer #{}",
-                data.clock.as_ref().unwrap().number,
-            );
             self.buffer.push_back(data);
         }
         final_blocks
@@ -126,7 +114,6 @@ impl DatabaseLoader {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
         let database_changes = DatabaseChanges::decode(output.value.as_slice())?;
 
-        // split between tables
         let splitted_inserts = split_table_changes(database_changes.table_changes);
 
         for (table, changes) in splitted_inserts {
@@ -178,29 +165,7 @@ impl DatabaseLoader {
             println!("index: {:?}", index..);
             self.buffer.drain(index..);
         }
-
-        // only if no buffer
-        // for table in self.touched_tables.drain().collect::<Vec<_>>() {
-        //     self.delete_table_block_greater_than(table, block_num)
-        //         .await?;
-        // }
     }
-
-    // async fn delete_table_block_greater_than(
-    //     &mut self,
-    //     table: String,
-    //     block: u64,
-    // ) -> Result<(), anyhow::Error> {
-    //     self.client
-    //         .query(&format!(
-    //             "ALTER TABLE {} DELETE WHERE block_num > {}",
-    //             table, block
-    //         ))
-    //         .execute()
-    //         .await?;
-    //
-    //     Ok(())
-    // }
 
     pub async fn persist_cursor(
         self: &mut Self,
@@ -223,7 +188,6 @@ impl DatabaseLoader {
     }
 
     fn get_table_info(&mut self, table_name: &str) -> Option<&DynamicTable> {
-        // self.touched_tables.insert(table_name.into());
         self.tables.get(table_name)
     }
 
