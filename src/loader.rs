@@ -7,6 +7,7 @@ use clickhouse::{
     inserter::{Inserter, RowInserter, SchemaInserter},
     Client, Row,
 };
+use log::{debug, info, warn};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use substreams_database_change::pb::database::{
@@ -151,19 +152,18 @@ impl DatabaseLoader {
         let cursor = data.cursor.clone();
         self.persist_cursor(cursor, block_num, block_id).await.map_err(|_| ElricError::InsertCursorError)?;
 
-        if block_num % 50000 == 0 {
-            println!(
-                "Block #{} - Payload {} ({} bytes)",
-                block_num,
-                output.type_url.replace("type.googleapis.com/", ""),
-                output.value.len()
-            );
-        }
+        info!(
+            "Block #{} - Payload {} ({} bytes)",
+            block_num,
+            output.type_url.replace("type.googleapis.com/", ""),
+            output.value.len()
+        );
 
         Ok(())
     }
 
     pub fn process_block_undo_signal(&mut self, block_num_signal: u64) {
+        warn!("Processing undo signal for block {}", block_num_signal);
         let final_block_index = self
             .buffer
             .iter()
@@ -172,7 +172,7 @@ impl DatabaseLoader {
             .map(|i| self.buffer.len() - i);
 
         if let Some(index) = final_block_index {
-            println!("index: {:?}", index..);
+            debug!("final_block_index drain: {:?}", index..);
             self.buffer.drain(index..);
         }
     }

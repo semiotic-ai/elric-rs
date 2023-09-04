@@ -7,6 +7,7 @@ use hyper_rustls::HttpsConnectorBuilder;
 use loader::Cursor;
 use pb::sf::substreams::v1::Package;
 use url::Url;
+use log::{info, error};
 
 use prost::Message;
 use std::collections::VecDeque;
@@ -89,6 +90,8 @@ pub enum ElricError {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    env_logger::init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -98,7 +101,7 @@ async fn main() -> Result<(), Error> {
         } => {
             let client = load_database(database_url);
             setup_schema(&client, file_name).await?;
-            println!("Schema created");
+            info!("Schema setup complete");
         }
         Commands::Run {
             id,
@@ -191,7 +194,7 @@ async fn run(
             _ = stop_rx.changed() => break,
             stream_response = stream.next() => match stream_response {
                 None => {
-                    println!("Stream consumed");
+                    info!("Stream consumed");
                     break;
                 }
                 Some(Ok(BlockResponse::New(data))) => {
@@ -202,16 +205,15 @@ async fn run(
                     loader.process_block_undo_signal(block_num_signal);
                 }
                 Some(Err(err)) => {
-                    println!();
-                    println!("Stream terminated with error");
-                    println!("{:?}", err);
+                    error!("Stream terminated with error");
+                    error!("{:?}", err);
                     exit(1);
                 }
             },
         }
     }
 
-    println!("Gracefully shutting down...");
+    info!("Gracefully shutting down...");
     loader.end().await;
     Ok(())
 }

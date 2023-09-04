@@ -461,6 +461,7 @@ dependencies = [
  "futures 0.3.28",
  "hyper",
  "hyper-rustls",
+ "log",
  "primitive-types",
  "prost",
  "prost-types",

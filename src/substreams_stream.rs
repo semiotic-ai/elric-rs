@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use futures03::{Stream, StreamExt};
+use log::{info, error, warn};
 use std::{
     pin::Pin,
     sync::Arc,
@@ -62,7 +63,7 @@ fn stream_blocks(
 
     try_stream! {
         loop {
-            println!("Blockstreams disconnected, connecting (endpoint {}, start block {}, cursor {})",
+            info!("Blockstreams disconnected, connecting (endpoint {}, start block {}, cursor {})",
                 &endpoint,
                 start_block_num,
                 &latest_cursor
@@ -85,7 +86,7 @@ fn stream_blocks(
 
             match result {
                 Ok(stream) => {
-                    println!("Blockstreams connected");
+                    info!("Blockstreams connected");
 
                     let mut encountered_error = false;
                     for await response in stream {
@@ -116,7 +117,7 @@ fn stream_blocks(
                                     Err(anyhow::Error::new(status.clone()))?;
                                 }
 
-                                println!("Received tonic error {:#}", status);
+                                error!("Received tonic error {:#}", status);
                                 encountered_error = true;
                                 break;
                             },
@@ -124,7 +125,7 @@ fn stream_blocks(
                     }
 
                     if !encountered_error {
-                        println!("Stream completed, reached end block");
+                        info!("Stream completed, reached end block");
                         return
                     }
                 },
@@ -133,7 +134,7 @@ fn stream_blocks(
                     // case where we actually _want_ to back off in case we keep
                     // having connection errors.
 
-                    println!("Unable to connect to endpoint: {:#}", e);
+                    error!("Unable to connect to endpoint: {:#}", e);
                 }
             }
 
@@ -202,13 +203,13 @@ async fn process_substreams_response(
             //     })
             //     .collect();
             //
-            // println!("Progess {}", progresses.join(", "));
+            // debug!("Progess {}", progresses.join(", "));
 
             BlockProcessedResult::Skip()
         }
         Some(_) => BlockProcessedResult::Skip(),
         None => {
-            println!("Got None on substream message");
+            warn!("Got None on substream message");
             BlockProcessedResult::Skip()
         } // _ => BlockProcessedResult::Skip(),
     }
