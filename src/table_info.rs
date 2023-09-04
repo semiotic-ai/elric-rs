@@ -10,9 +10,9 @@ use strum_macros::EnumString;
 
 use crate::ElricError;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, EnumString)]
+#[derive(Debug, Clone, PartialEq, Default, PartialOrd, Eq, EnumString)]
 pub enum ColumnType {
-    String,
+    #[default] String,
     FixedString(usize),
     UInt8,
     UInt16,
@@ -29,9 +29,11 @@ pub enum ColumnType {
     Float32,
     Float64,
     DateTime,
+    Date,
     Bool,
     LowCardinality,
     Decimal,
+    Nullable(Box<ColumnType>),
 }
 
 pub struct DynamicInsert {
@@ -150,8 +152,11 @@ impl Serialize for DynamicInsert {
                             .timestamp() as i32;
                         serializer.serialize_element(&time)?;
                     }
-                    ColumnType::LowCardinality | ColumnType::Decimal => {
-                        unimplemented!("LowCardinality not implemented")
+                    ColumnType::Date | 
+                        ColumnType::Nullable(_) |
+                        ColumnType::LowCardinality | 
+                        ColumnType::Decimal => {
+                        unimplemented!("{:?} not implemented", column.data_type)
                     }
                 }
             }
@@ -233,6 +238,7 @@ pub async fn get_columns(
 
 pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, ElricError> {
     let query = client.query(
+        format!(
         "
 	SELECT
 		table_schema,
@@ -241,11 +247,11 @@ pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, El
 		information_schema.tables
 	WHERE
 		table_type = 1 AND
-		table_schema NOT IN ('information_schema', 'system', 'INFORMATION_SCHEMA')
+		table_schema = {}
 	ORDER BY
 		table_schema,
 		table_name
-                 ",
+                 ", client.database().unwrap_or("default")).as_str()
     );
     let result = query.fetch_all().await.map_err(|_| ElricError::LoadSchemaError)?;
     Ok(result)
