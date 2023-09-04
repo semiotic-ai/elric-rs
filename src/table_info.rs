@@ -8,6 +8,8 @@ use primitive_types::U256;
 use serde::{ser::SerializeTuple, Deserialize, Serialize};
 use strum_macros::EnumString;
 
+use crate::ElricError;
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, EnumString)]
 pub enum ColumnType {
     String,
@@ -208,7 +210,7 @@ pub async fn get_columns(
     client: &Client,
     database: &str,
     table: &str,
-) -> anyhow::Result<Vec<ColumnInfo>> {
+) -> Result<Vec<ColumnInfo>, ElricError> {
     let query = client.query(&format!(
         "
 	SELECT
@@ -225,11 +227,11 @@ pub async fn get_columns(
                  ",
         database, table
     ));
-    let result = query.fetch_all().await?;
+    let result = query.fetch_all().await.map_err(|_| ElricError::ColumnNotFound(database.into(), table.into()))?;
     Ok(result)
 }
 
-pub async fn get_table_information(client: &Client) -> anyhow::Result<Vec<TableInfo>> {
+pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, ElricError> {
     let query = client.query(
         "
 	SELECT
@@ -245,6 +247,6 @@ pub async fn get_table_information(client: &Client) -> anyhow::Result<Vec<TableI
 		table_name
                  ",
     );
-    let result = query.fetch_all().await?;
+    let result = query.fetch_all().await.map_err(|_| ElricError::LoadSchemaError)?;
     Ok(result)
 }

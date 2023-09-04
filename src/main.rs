@@ -1,4 +1,4 @@
-use anyhow::{format_err, Context, Error};
+use anyhow::Error;
 use clap::{Parser, Subcommand};
 use clickhouse::Client;
 use futures03::future::join_all;
@@ -54,6 +54,10 @@ enum Commands {
         endpoint_url: String,
         #[arg(long)]
         token: Option<String>,
+        #[arg(long, default_value = "0")]
+        start_block: i64,
+        #[arg(long, default_value = "0")]
+        end_block: u64,
     },
     Setup {
         database_url: Url,
@@ -62,9 +66,25 @@ enum Commands {
 }
 
 #[derive(Error, Debug)]
-enum ElricError {
+pub enum ElricError {
     #[error("Token not found")]
     TokenNotFound,
+    #[error("Could not read package file")]
+    PackageFileError(#[from] std::io::Error),
+    #[error("Could not decode package")]
+    PackageDecodeError(#[from] prost::DecodeError),
+    #[error("Could not load cursor")]
+    CursorError,
+    #[error("Could not load schema")]
+    LoadSchemaError,
+    #[error("Could not insert cursor")]
+    InsertCursorError,
+    #[error("Could not insert row")]
+    InsertRowError,
+    #[error("Could not commit transaction")]
+    CommitError,
+    #[error("Could not find columns for database {0} table {1}")]
+    ColumnNotFound(String, String),
 }
 
 #[tokio::main]
@@ -87,13 +107,25 @@ async fn main() -> Result<(), Error> {
             module: module_name,
             endpoint_url,
             token,
+            start_block,
+            end_block,
         } => {
             let client = load_database(database_url);
             let token = match env::var("SUBSTREAMS_API_TOKEN").ok() {
                 Some(token) => token,
                 None => token.ok_or(ElricError::TokenNotFound)?,
             };
-            run(client, id, package_file, module_name, endpoint_url, token).await?;
+            run(
+                client,
+                id,
+                package_file,
+                module_name,
+                endpoint_url,
+                token,
+                start_block,
+                end_block,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -106,19 +138,21 @@ async fn run(
     module: String,
     endpoint_url: String,
     token: String,
-) -> Result<(), Error> {
+    start_block: i64,
+    end_block: u64,
+) -> Result<(), ElricError> {
     let package = read_package(&package_file)?;
-    let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, Some(token)).await?);
+    let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, Some(token)));
 
-    let cursor: Option<String> = load_persisted_cursor(&client, &id).await?;
+    let cursor: Option<String> = load_persisted_cursor(&client, &id).await.map_err(|_| ElricError::CursorError)?;
 
     let mut stream = SubstreamsStream::new(
         endpoint.clone(),
         cursor,
         package.modules.clone(),
         module,
-        0,
-        0,
+        start_block,
+        end_block,
     );
 
     let table_info = get_table_information(&client).await?;
@@ -127,13 +161,12 @@ async fn run(
         .iter()
         .map(|table| async {
             let mut columns = get_columns(&client, &table.table_schema, &table.table_name)
-                .await
-                .expect("could not find columns");
+                .await?;
             columns.sort();
-            DynamicTable::new(&table.table_name, columns)
+            Ok(DynamicTable::new(&table.table_name, columns))
         })
         .collect::<Vec<_>>();
-    let dynamic_tables = join_all(dynamic_tables).await;
+    let dynamic_tables = join_all(dynamic_tables).await.into_iter().collect::<Result<Vec<_>, ElricError>>()?;
 
     let mut loader = DatabaseLoader::new(id, client, dynamic_tables);
 
@@ -203,9 +236,10 @@ fn load_database(database_url: Url) -> Client {
 
     const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
+
     let https = HttpsConnectorBuilder::new()
         .with_native_roots()
-        .https_only()
+        .https_or_http()
         .enable_http1()
         .build();
 
@@ -257,9 +291,9 @@ async fn load_persisted_cursor(
     Ok(cursor.map(|c| c.cursor().clone()))
 }
 
-fn read_package(file: &str) -> Result<Package, anyhow::Error> {
-    let content = std::fs::read(file).context(format_err!("read package {}", file))?;
-    Package::decode(content.as_ref()).context("decode command")
+fn read_package(file: &str) -> Result<Package, ElricError> {
+    let content = std::fs::read(file)?;
+    Ok(Package::decode(content.as_ref())?)
 }
 
 #[cfg(test)]

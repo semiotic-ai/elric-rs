@@ -3,8 +3,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Error};
-use clickhouse::{inserter::Inserter, Client, Row};
+use clickhouse::{
+    inserter::{Inserter, RowInserter, SchemaInserter},
+    Client, Row,
+};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use substreams_database_change::pb::database::{
@@ -14,7 +16,7 @@ use substreams_database_change::pb::database::{
 use crate::{
     convert_field_to_hash,
     pb::sf::substreams::rpc::v2::BlockScopedData,
-    table_info::{DynamicInsert, DynamicTable},
+    table_info::{DynamicInsert, DynamicTable}, ElricError,
 };
 
 const BUFFER_LEN: usize = 12;
@@ -22,8 +24,8 @@ const BUFFER_LEN: usize = 12;
 pub struct DatabaseLoader {
     id: String,
     tables: HashMap<String, DynamicTable>,
-    inserters: HashMap<String, Inserter<DynamicTable>>,
-    cursor: Inserter<Cursor>,
+    inserters: HashMap<String, Inserter<SchemaInserter<DynamicTable>, DynamicTable>>,
+    cursor: Inserter<RowInserter<Cursor>, Cursor>,
     buffer: VecDeque<BlockScopedData>,
 }
 
@@ -96,7 +98,7 @@ impl DatabaseLoader {
             final_blocks.extend(self.buffer.drain(0..=len));
         }
 
-        if data.clock.as_ref().unwrap().number < data.final_block_height {
+        if data.clock.as_ref().unwrap().number <= data.final_block_height {
             final_blocks.push(data);
         } else {
             self.buffer.push_back(data);
@@ -104,14 +106,14 @@ impl DatabaseLoader {
         final_blocks
     }
 
-    pub async fn process_block_scoped_data(&mut self, data: BlockScopedData) -> Result<(), Error> {
+    pub async fn process_block_scoped_data(&mut self, data: BlockScopedData) -> Result<(), ElricError> {
         for block in self.get_final_blocks_from_buffer(data) {
             self.process_final_blocks(block).await?;
         }
         Ok(())
     }
 
-    async fn process_final_blocks(&mut self, data: BlockScopedData) -> Result<(), Error> {
+    async fn process_final_blocks(&mut self, data: BlockScopedData) -> Result<(), ElricError> {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
         let database_changes = DatabaseChanges::decode(output.value.as_slice())?;
 
@@ -138,23 +140,25 @@ impl DatabaseLoader {
                 inserter
                     .write(&dynamic_insert)
                     .await
-                    .context("inserter write")?;
+                    .map_err(|_| ElricError::InsertRowError)?;
             }
 
-            inserter.commit().await.context("Inserter end")?;
+            inserter.commit().await.map_err(|_| ElricError::CommitError)?;
         }
 
         let block_num = data.clock.as_ref().unwrap().number;
         let block_id = data.clock.as_ref().unwrap().id.clone();
         let cursor = data.cursor.clone();
-        self.persist_cursor(cursor, block_num, block_id).await?;
+        self.persist_cursor(cursor, block_num, block_id).await.map_err(|_| ElricError::InsertCursorError)?;
 
-        println!(
-            "Block #{} - Payload {} ({} bytes)",
-            data.clock.as_ref().unwrap().number,
-            output.type_url.replace("type.googleapis.com/", ""),
-            output.value.len()
-        );
+        if block_num % 50000 == 0 {
+            println!(
+                "Block #{} - Payload {} ({} bytes)",
+                block_num,
+                output.type_url.replace("type.googleapis.com/", ""),
+                output.value.len()
+            );
+        }
 
         Ok(())
     }
@@ -190,7 +194,10 @@ impl DatabaseLoader {
         Ok(())
     }
 
-    fn get_table_inserter(&mut self, table_name: &str) -> Option<&mut Inserter<DynamicTable>> {
+    fn get_table_inserter(
+        &mut self,
+        table_name: &str,
+    ) -> Option<&mut Inserter<SchemaInserter<DynamicTable>, DynamicTable>> {
         self.inserters.get_mut(table_name)
     }
 
@@ -207,7 +214,8 @@ impl DatabaseLoader {
 }
 
 fn split_table_changes(table_changes: Vec<TableChange>) -> HashMap<String, Vec<TableChange>> {
-    let mut table_map: HashMap<String, Vec<TableChange>> = HashMap::new();
+    let mut table_map: HashMap<String, Vec<TableChange>> =
+        HashMap::with_capacity(table_changes.len());
 
     for change in table_changes {
         // Check if the table name exists in the HashMap

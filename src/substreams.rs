@@ -23,7 +23,7 @@ impl Display for SubstreamsEndpoint {
 }
 
 impl SubstreamsEndpoint {
-    pub async fn new<S: AsRef<str>>(url: S, token: Option<String>) -> Result<Self, anyhow::Error> {
+    pub fn new<S: AsRef<str>>(url: S, token: Option<String>) -> Self{
         let uri = url
             .as_ref()
             .parse::<Uri>()
@@ -42,11 +42,11 @@ impl SubstreamsEndpoint {
         let uri = endpoint.uri().to_string();
         let channel = endpoint.connect_lazy();
 
-        Ok(SubstreamsEndpoint {
+        SubstreamsEndpoint {
             uri,
             channel,
             token,
-        })
+        }
     }
 
     pub async fn substreams(
