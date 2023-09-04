@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/semiotic-ai/elric-rs/compare/v1.2.1...v1.3.0) (2023-09-04)
+
+
+### Features
+
+* add better error handling ([d529066](https://github.com/semiotic-ai/elric-rs/commit/d529066d533fa6b5710d0df8d42d421bdd53e403))
+
 ## [1.2.1](https://github.com/semiotic-ai/elric-rs/compare/v1.2.0...v1.2.1) (2023-08-16)
 
 
