@@ -17,7 +17,8 @@ use substreams_database_change::pb::database::{
 use crate::{
     convert_field_to_hash,
     pb::sf::substreams::rpc::v2::BlockScopedData,
-    table_info::{DynamicInsert, DynamicTable}, ElricError,
+    table_info::{DynamicInsert, DynamicTable},
+    ElricError,
 };
 
 const BUFFER_LEN: usize = 12;
@@ -30,7 +31,7 @@ pub struct DatabaseLoader {
     buffer: VecDeque<BlockScopedData>,
 }
 
-#[derive(Row, Serialize, Deserialize)]
+#[derive(Debug, Row, Serialize, Deserialize)]
 pub struct Cursor {
     id: String,
     cursor: String,
@@ -107,9 +108,18 @@ impl DatabaseLoader {
         final_blocks
     }
 
-    pub async fn process_block_scoped_data(&mut self, data: BlockScopedData) -> Result<(), ElricError> {
+    pub async fn process_block_scoped_data(
+        &mut self,
+        data: BlockScopedData,
+    ) -> Result<(), ElricError> {
         for block in self.get_final_blocks_from_buffer(data) {
+            let block_num = block.clock.as_ref().unwrap().number;
+            let block_id = block.clock.as_ref().unwrap().id.clone();
+            let cursor = block.cursor.clone();
             self.process_final_blocks(block).await?;
+            self.persist_cursor(cursor, block_num, block_id)
+                .await
+                .map_err(|_| ElricError::InsertCursorError)?;
         }
         Ok(())
     }
@@ -123,7 +133,7 @@ impl DatabaseLoader {
         for (table, changes) in splitted_inserts {
             let table_info = self
                 .get_table_info(&table)
-                .expect(&format!("It was not possible to find the table {}", table))
+                .unwrap_or_else(|| panic!("It was not possible to find the table {}", table))
                 .clone();
             let inserter = self.get_table_inserter(&table).unwrap();
             for change in changes {
@@ -144,14 +154,13 @@ impl DatabaseLoader {
                     .map_err(|_| ElricError::InsertRowError)?;
             }
 
-            inserter.commit().await.map_err(|_| ElricError::CommitError)?;
+            inserter
+                .commit()
+                .await
+                .map_err(|_| ElricError::CommitError)?;
         }
 
         let block_num = data.clock.as_ref().unwrap().number;
-        let block_id = data.clock.as_ref().unwrap().id.clone();
-        let cursor = data.cursor.clone();
-        self.persist_cursor(cursor, block_num, block_id).await.map_err(|_| ElricError::InsertCursorError)?;
-
         info!(
             "Block #{} - Payload {} ({} bytes)",
             block_num,
@@ -178,7 +187,7 @@ impl DatabaseLoader {
     }
 
     pub async fn persist_cursor(
-        self: &mut Self,
+        &mut self,
         cursor: String,
         block_num: u64,
         block_id: String,
@@ -235,14 +244,27 @@ fn split_table_changes(table_changes: Vec<TableChange>) -> HashMap<String, Vec<T
 mod tests {
     use std::collections::{HashMap, VecDeque};
 
-    use clickhouse::{test, Client};
+    use clickhouse::{test, Client, Row};
+    use prost::Message;
+    use prost_types::Any;
+    use serde::Deserialize;
+    use substreams_database_change::pb::database::{DatabaseChanges, Field, TableChange};
 
     use crate::{
         loader::BUFFER_LEN,
-        pb::sf::substreams::{rpc::v2::BlockScopedData, v1::Clock},
+        pb::sf::substreams::{
+            rpc::v2::{BlockScopedData, MapModuleOutput},
+            v1::Clock,
+        },
+        table_info::{ColumnInfo, ColumnType, DynamicTable},
     };
 
     use super::DatabaseLoader;
+    use anyhow::Result;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
 
     #[tokio::test]
     async fn test_undo_block_signal() {
@@ -322,5 +344,76 @@ mod tests {
         };
         let final_blocks = loader.get_final_blocks_from_buffer(data);
         assert_eq!(final_blocks.len(), 1);
+    }
+
+    #[derive(Row, Debug, Deserialize, PartialEq)]
+    #[allow(dead_code)]
+    struct TestInsert {
+        test: u64,
+    }
+
+    #[tokio::test]
+    async fn test_process_data() -> Result<()> {
+        init();
+        let mut mock = test::Mock::new();
+        mock.non_exhaustive();
+        let client = Client::default().with_url(mock.url());
+        let table = vec![DynamicTable::new(
+            "test",
+            vec![ColumnInfo {
+                column_name: "test".into(),
+                data_type: ColumnType::UInt64,
+            }],
+        )];
+        let mut loader = DatabaseLoader::new("test".into(), client, table);
+        let changes = vec![
+            TableChange {
+                table: "test".into(),
+                fields: vec![Field {
+                    name: "test".into(),
+                    old_value: "0".into(),
+                    new_value: "1".into(),
+                }],
+                ..Default::default()
+            },
+            TableChange {
+                table: "test".into(),
+                fields: vec![Field {
+                    name: "test".into(),
+                    old_value: "0".into(),
+                    new_value: "2".into(),
+                }],
+                ..Default::default()
+            },
+        ];
+        let data = create_block_scoped_data(changes);
+        let inserts_recording = mock.add(test::handlers::record());
+        loader.process_final_blocks(data).await?;
+        loader.end().await;
+        let inserts: Vec<TestInsert> = inserts_recording.collect().await;
+        assert_eq!(
+            inserts,
+            vec![TestInsert { test: 1 }, TestInsert { test: 2 }]
+        );
+        Ok(())
+    }
+
+    fn create_block_scoped_data(table_changes: Vec<TableChange>) -> BlockScopedData {
+        let mut buffer = vec![];
+        let _ = DatabaseChanges { table_changes }.encode(&mut buffer);
+        BlockScopedData {
+            output: Some(MapModuleOutput {
+                map_output: Some(Any {
+                    value: buffer,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            clock: Some(Clock {
+                number: 0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 }

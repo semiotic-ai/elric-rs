@@ -12,7 +12,8 @@ use crate::ElricError;
 
 #[derive(Debug, Clone, PartialEq, Default, PartialOrd, Eq, EnumString)]
 pub enum ColumnType {
-    #[default] String,
+    #[default]
+    String,
     FixedString(usize),
     UInt8,
     UInt16,
@@ -40,6 +41,7 @@ pub struct DynamicInsert {
     data: HashMap<String, String>,
     table_info: DynamicTable,
 }
+
 #[derive(Clone)]
 pub struct DynamicTable {
     pub table_name: String,
@@ -152,10 +154,10 @@ impl Serialize for DynamicInsert {
                             .timestamp() as i32;
                         serializer.serialize_element(&time)?;
                     }
-                    ColumnType::Date | 
-                        ColumnType::Nullable(_) |
-                        ColumnType::LowCardinality | 
-                        ColumnType::Decimal => {
+                    ColumnType::Date
+                    | ColumnType::Nullable(_)
+                    | ColumnType::LowCardinality
+                    | ColumnType::Decimal => {
                         unimplemented!("{:?} not implemented", column.data_type)
                     }
                 }
@@ -172,18 +174,18 @@ impl<'de> Deserialize<'de> for ColumnType {
     {
         let data_type: String = Deserialize::deserialize(deserializer)?;
         let data = data_type
-            .split("(")
+            .split('(')
             .collect::<VecDeque<_>>()
             .pop_front()
             .unwrap();
 
-        let column_type =
-            ColumnType::from_str(data).expect(&format!("unimplemented column type {}", data_type));
+        let column_type = ColumnType::from_str(data)
+            .unwrap_or_else(|_| panic!("unimplemented column type {}", data_type));
         match column_type {
             ColumnType::FixedString(_) => {
                 let size: usize = data_type
                     .replace("FixedString(", "")
-                    .replace(")", "")
+                    .replace(')', "")
                     .parse()
                     .expect("could not get fixedstring usize");
                 Ok(ColumnType::FixedString(size))
@@ -232,14 +234,17 @@ pub async fn get_columns(
                  ",
         database, table
     ));
-    let result = query.fetch_all().await.map_err(|_| ElricError::ColumnNotFound(database.into(), table.into()))?;
+    let result = query
+        .fetch_all()
+        .await
+        .map_err(|_| ElricError::ColumnNotFound(database.into(), table.into()))?;
     Ok(result)
 }
 
 pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, ElricError> {
     let query = client.query(
         format!(
-        "
+            "
 	SELECT
 		table_schema,
 		table_name
@@ -251,8 +256,14 @@ pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, El
 	ORDER BY
 		table_schema,
 		table_name
-                 ", client.database().unwrap_or("default")).as_str()
+                 ",
+            client.database().unwrap_or("default")
+        )
+        .as_str(),
     );
-    let result = query.fetch_all().await.map_err(|_| ElricError::LoadSchemaError)?;
+    let result = query
+        .fetch_all()
+        .await
+        .map_err(|_| ElricError::LoadSchemaError)?;
     Ok(result)
 }

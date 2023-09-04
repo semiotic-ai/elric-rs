@@ -23,7 +23,7 @@ impl Display for SubstreamsEndpoint {
 }
 
 impl SubstreamsEndpoint {
-    pub fn new<S: AsRef<str>>(url: S, token: Option<String>) -> Self{
+    pub fn new<S: AsRef<str>>(url: S, token: Option<String>) -> Self {
         let uri = url
             .as_ref()
             .parse::<Uri>()

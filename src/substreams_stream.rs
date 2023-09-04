@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use futures03::{Stream, StreamExt};
-use log::{info, error, warn};
+use log::{error, info, warn};
 use std::{
     pin::Pin,
     sync::Arc,
@@ -58,7 +58,7 @@ fn stream_blocks(
     start_block_num: i64,
     stop_block_num: u64,
 ) -> impl Stream<Item = Result<BlockResponse, Error>> {
-    let mut latest_cursor = cursor.unwrap_or_else(|| "".to_string());
+    let mut latest_cursor = cursor.unwrap_or_default();
     let mut backoff = ExponentialBackoff::from_millis(10).max_delay(Duration::from_secs(45));
 
     try_stream! {

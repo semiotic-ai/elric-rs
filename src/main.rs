@@ -5,9 +5,9 @@ use futures03::future::join_all;
 use futures03::StreamExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use loader::Cursor;
+use log::{error, info};
 use pb::sf::substreams::v1::Package;
 use url::Url;
-use log::{info, error};
 
 use prost::Message;
 use std::collections::VecDeque;
@@ -118,15 +118,20 @@ async fn main() -> Result<(), Error> {
                 Some(token) => token,
                 None => token.ok_or(ElricError::TokenNotFound)?,
             };
-            run(
-                client,
-                id,
+            let cursor = load_persisted_cursor(&client, &id).await.map_err(|_| ElricError::CursorError)?;
+            let stream = create_stream(
+                cursor,
                 package_file,
                 module_name,
                 endpoint_url,
                 token,
                 start_block,
                 end_block,
+                )?;
+            run(
+                id,
+                stream,
+                client,
             )
             .await?;
         }
@@ -134,42 +139,48 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn run(
-    client: clickhouse::Client,
-    id: String,
+fn create_stream(
+    cursor: Option<String>,
     package_file: String,
     module: String,
     endpoint_url: String,
     token: String,
     start_block: i64,
     end_block: u64,
-) -> Result<(), ElricError> {
+) -> Result<SubstreamsStream, ElricError> {
     let package = read_package(&package_file)?;
-    let endpoint = Arc::new(SubstreamsEndpoint::new(&endpoint_url, Some(token)));
+    let endpoint = Arc::new(SubstreamsEndpoint::new(endpoint_url, Some(token)));
 
-    let cursor: Option<String> = load_persisted_cursor(&client, &id).await.map_err(|_| ElricError::CursorError)?;
-
-    let mut stream = SubstreamsStream::new(
+    Ok(SubstreamsStream::new(
         endpoint.clone(),
         cursor,
         package.modules.clone(),
         module,
         start_block,
         end_block,
-    );
+    ))
+}
+
+async fn run(
+    id: String,
+    mut stream: SubstreamsStream,
+    client: clickhouse::Client,
+) -> Result<(), ElricError> {
 
     let table_info = get_table_information(&client).await?;
 
     let dynamic_tables = table_info
         .iter()
         .map(|table| async {
-            let mut columns = get_columns(&client, &table.table_schema, &table.table_name)
-                .await?;
+            let mut columns = get_columns(&client, &table.table_schema, &table.table_name).await?;
             columns.sort();
             Ok(DynamicTable::new(&table.table_name, columns))
         })
         .collect::<Vec<_>>();
-    let dynamic_tables = join_all(dynamic_tables).await.into_iter().collect::<Result<Vec<_>, ElricError>>()?;
+    let dynamic_tables = join_all(dynamic_tables)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, ElricError>>()?;
 
     let mut loader = DatabaseLoader::new(id, client, dynamic_tables);
 
@@ -238,7 +249,6 @@ fn load_database(database_url: Url) -> Client {
 
     const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
-
     let https = HttpsConnectorBuilder::new()
         .with_native_roots()
         .https_or_http()
@@ -262,7 +272,7 @@ fn load_database(database_url: Url) -> Client {
 
 async fn setup_schema(client: &Client, file: String) -> Result<(), Error> {
     let schema = fs::read_to_string(file)?;
-    for stmt in schema.split(";") {
+    for stmt in schema.split(';') {
         let stmt = stmt.trim();
         if !stmt.is_empty() {
             client.query(stmt).execute().await?;
