@@ -247,7 +247,7 @@ pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, El
 		information_schema.tables
 	WHERE
 		table_type = 1 AND
-		table_schema = {}
+		table_schema = '{}'
 	ORDER BY
 		table_schema,
 		table_name
