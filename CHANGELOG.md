@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/semiotic-ai/elric-rs/compare/v1.3.0...v1.3.1) (2023-09-04)
+
+
+### Bug Fixes
+
+* missing quote ([9cd8152](https://github.com/semiotic-ai/elric-rs/commit/9cd815240900919a1c11f668cf15299b00bb7b79))
+
 ## [1.3.0](https://github.com/semiotic-ai/elric-rs/compare/v1.2.1...v1.3.0) (2023-09-04)
 
 
