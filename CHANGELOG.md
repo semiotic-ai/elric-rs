@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/semiotic-ai/elric-rs/compare/v1.3.1...v1.4.0) (2023-09-18)
+
+
+### Features
+
+* add better logging ([9b29ea1](https://github.com/semiotic-ai/elric-rs/commit/9b29ea1052bc33459744b04a6ef8cd164f680c1f))
+* use tracing as logging ([cec9b03](https://github.com/semiotic-ai/elric-rs/commit/cec9b03d7d71707cb856425d7573c9f95da2f108))
+
 ## [1.3.1](https://github.com/semiotic-ai/elric-rs/compare/v1.3.0...v1.3.1) (2023-09-04)
 
 
