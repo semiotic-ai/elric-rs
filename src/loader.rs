@@ -7,7 +7,7 @@ use clickhouse::{
     inserter::{Inserter, RowInserter, SchemaInserter},
     Client, Row,
 };
-use log::{debug, info, warn};
+use tracing::{debug, info, warn};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use substreams_database_change::pb::database::{
@@ -127,6 +127,7 @@ impl DatabaseLoader {
     async fn process_final_blocks(&mut self, data: BlockScopedData) -> Result<(), ElricError> {
         let output = data.output.as_ref().unwrap().map_output.as_ref().unwrap();
         let database_changes = DatabaseChanges::decode(output.value.as_slice())?;
+        let changes_length = database_changes.table_changes.len();
 
         let splitted_inserts = split_table_changes(database_changes.table_changes);
 
@@ -162,6 +163,8 @@ impl DatabaseLoader {
 
         let block_num = data.clock.as_ref().unwrap().number;
         info!(
+            block_num,
+            changes_length,
             "Block #{} - Payload {} ({} bytes)",
             block_num,
             output.type_url.replace("type.googleapis.com/", ""),
@@ -172,7 +175,7 @@ impl DatabaseLoader {
     }
 
     pub fn process_block_undo_signal(&mut self, block_num_signal: u64) {
-        warn!("Processing undo signal for block {}", block_num_signal);
+        warn!(undo_block_num = block_num_signal, "Processing undo signal for block {}", block_num_signal);
         let final_block_index = self
             .buffer
             .iter()
@@ -181,8 +184,11 @@ impl DatabaseLoader {
             .map(|i| self.buffer.len() - i);
 
         if let Some(index) = final_block_index {
-            debug!("final_block_index drain: {:?}", index..);
-            self.buffer.drain(index..);
+            let drained = self.buffer.drain(index..);
+            for d in drained {
+                let block_num = d.clock.as_ref().unwrap().number;
+                debug!(block_num, ?d, "New block drained");
+            }
         }
     }
 
@@ -249,6 +255,7 @@ mod tests {
     use prost_types::Any;
     use serde::Deserialize;
     use substreams_database_change::pb::database::{DatabaseChanges, Field, TableChange};
+    use tracing_test::traced_test;
 
     use crate::{
         loader::BUFFER_LEN,
@@ -261,10 +268,6 @@ mod tests {
 
     use super::DatabaseLoader;
     use anyhow::Result;
-
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
 
     #[tokio::test]
     async fn test_undo_block_signal() {
@@ -353,8 +356,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_process_data() -> Result<()> {
-        init();
         let mut mock = test::Mock::new();
         mock.non_exhaustive();
         let client = Client::default().with_url(mock.url());

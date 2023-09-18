@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
 use futures03::{Stream, StreamExt};
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 use std::{
     pin::Pin,
     sync::Arc,

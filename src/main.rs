@@ -5,8 +5,11 @@ use futures03::future::join_all;
 use futures03::StreamExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use loader::Cursor;
-use log::{error, info};
+use tracing::{error, info};
+use logging::LogConfig;
 use pb::sf::substreams::v1::Package;
+use tracing_core::LevelFilter;
+use tracing_subscriber::{prelude::*, Registry, EnvFilter};
 use url::Url;
 
 use prost::Message;
@@ -26,6 +29,7 @@ use crate::table_info::{get_columns, get_table_information, DynamicTable};
 
 mod fixed_string;
 mod loader;
+mod logging;
 mod pb;
 mod substreams;
 mod substreams_stream;
@@ -90,7 +94,14 @@ pub enum ElricError {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    env_logger::init();
+    let subscriber = Registry::default();
+    let cfg = LogConfig::new();
+    let subscriber = subscriber.with(cfg.layer()).with(
+        EnvFilter::builder()
+            .with_default_directive(LevelFilter::INFO.into())
+            .from_env_lossy(),
+    );
+    tracing::subscriber::set_global_default(subscriber).expect("Could not set up global logger");
 
     let cli = Cli::parse();
 
@@ -216,8 +227,7 @@ async fn run(
                     loader.process_block_undo_signal(block_num_signal);
                 }
                 Some(Err(err)) => {
-                    error!("Stream terminated with error");
-                    error!("{:?}", err);
+                    error!(%err, "Stream terminated with error");
                     exit(1);
                 }
             },
