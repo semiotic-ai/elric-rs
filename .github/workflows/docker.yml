@@ -31,5 +31,5 @@ jobs:
             TARGET=${{ matrix.contract }}
           push: true
           tags: | 
-              ${{ env.REGISTRY }}/elric-rs/app:latest
-              ${{ env.REGISTRY }}/elric-rs/app:${{ steps.get-tag.outputs.short_ref }}
+              ${{ env.REGISTRY }}/elric-rs:latest
+              ${{ env.REGISTRY }}/elric-rs:${{ steps.get-tag.outputs.short_ref }}
