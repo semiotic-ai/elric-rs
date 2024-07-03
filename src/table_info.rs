@@ -245,17 +245,15 @@ pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, El
     let query = client.query(
         format!(
             "
-	SELECT
-		table_schema,
-		table_name
-	FROM
-		information_schema.tables
-	WHERE
-		table_type = 1 AND
-		table_schema = '{}'
-	ORDER BY
-		table_schema,
-		table_name
+            SELECT database AS table_schema,
+                     name AS table_name
+              FROM system.tables
+              WHERE NOT is_temporary
+                AND engine NOT LIKE '%View'
+                AND engine NOT LIKE 'System%'
+                AND has_own_data != 0
+                AND database = '{}'
+              ORDER BY database, name
                  ",
             client.database().unwrap_or("default")
         )
@@ -264,6 +262,6 @@ pub async fn get_table_information(client: &Client) -> Result<Vec<TableInfo>, El
     let result = query
         .fetch_all()
         .await
-        .map_err(|_| ElricError::LoadSchemaError)?;
+        .map_err(|e| ElricError::LoadSchemaError(e))?;
     Ok(result)
 }
