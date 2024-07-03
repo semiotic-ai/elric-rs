@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/semiotic-ai/elric-rs/compare/v1.4.0...v1.4.1) (2024-07-03)
+
+
+### Bug Fixes
+
+* update to use latest clickhouse version ([2fdc5fb](https://github.com/semiotic-ai/elric-rs/commit/2fdc5fb13d7950a828555ca268e7be6a16ecd4d5))
+
 ## [1.4.0](https://github.com/semiotic-ai/elric-rs/compare/v1.3.1...v1.4.0) (2023-09-18)
 
 
